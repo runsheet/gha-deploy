@@ -1,0 +1,10 @@
+# gha-deploy config. Mounted into the operator pod (e.g. via a ConfigMap) at
+# /etc/gha-deploy/config.yaml.
+issuer: https://token.actions.githubusercontent.com   # default; GitHub Actions OIDC
+audience: gha-deploy                                   # the aud the workflow requests
+
+# Allowlist: a repo (optionally pinned to a ref) may deploy to these namespaces.
+rules:
+  - repository: optradercards/shiny-sync
+    ref: refs/heads/main          # omit for "any ref"
+    namespaces: [optrader]        # "*" allows any namespace the SA's RBAC permits

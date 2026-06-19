@@ -1,0 +1,98 @@
+# Example deployment of gha-deploy. Adjust the image, config (ConfigMap), the
+# per-namespace RoleBinding(s), and add an Ingress for your environment.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gha-deploy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gha-deploy
+  namespace: gha-deploy
+---
+# What the operator may do. Bind it (below) only in namespaces you allow deploys to.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gha-deploy
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+# Scope: this grants the operator deploy rights ONLY in namespace "optrader".
+# Add one RoleBinding per target namespace (matches your config allowlist).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gha-deploy
+  namespace: optrader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gha-deploy
+subjects:
+  - kind: ServiceAccount
+    name: gha-deploy
+    namespace: gha-deploy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gha-deploy-config
+  namespace: gha-deploy
+data:
+  config.yaml: |
+    issuer: https://token.actions.githubusercontent.com
+    audience: gha-deploy
+    rules:
+      - repository: optradercards/shiny-sync
+        ref: refs/heads/main
+        namespaces: [optrader]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gha-deploy
+  namespace: gha-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gha-deploy
+  template:
+    metadata:
+      labels:
+        app: gha-deploy
+    spec:
+      serviceAccountName: gha-deploy
+      containers:
+        - name: gha-deploy
+          image: ghcr.io/runsheet/gha-deploy:latest
+          args: ["-config", "/etc/gha-deploy/config.yaml", "-addr", ":8080"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/gha-deploy, readOnly: true }
+      volumes:
+        - name: config
+          configMap:
+            name: gha-deploy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gha-deploy
+  namespace: gha-deploy
+spec:
+  selector:
+    app: gha-deploy
+  ports:
+    - { name: http, port: 80, targetPort: 8080 }

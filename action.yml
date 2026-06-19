@@ -1,0 +1,54 @@
+name: "gha-deploy"
+description: "Deploy to Kubernetes via the gha-deploy OIDC operator (keyless; no kubeconfig)"
+inputs:
+  url:
+    description: "Operator deploy endpoint, e.g. https://deploy.example.com/deploy"
+    required: true
+  audience:
+    description: "OIDC audience the operator expects"
+    required: true
+  namespace:
+    description: "Target namespace"
+    required: true
+  set-image:
+    description: 'JSON array of {deployment,container?,image}, e.g. [{"deployment":"pokemon","image":"ghcr.io/org/app:sha"}]'
+    required: false
+    default: "[]"
+  wait:
+    description: "Comma-separated deployment names to wait for rollout (defaults to the set-image targets)"
+    required: false
+    default: ""
+  timeout-seconds:
+    description: "Rollout wait timeout"
+    required: false
+    default: "120"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        IN_URL: ${{ inputs.url }}
+        IN_AUD: ${{ inputs.audience }}
+        IN_NS: ${{ inputs.namespace }}
+        IN_SET_IMAGE: ${{ inputs.set-image }}
+        IN_WAIT: ${{ inputs.wait }}
+        IN_TIMEOUT: ${{ inputs.timeout-seconds }}
+      run: |
+        set -euo pipefail
+        # Requires: permissions: id-token: write
+        token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$IN_AUD" | jq -r '.value')
+        wait_json=$(printf '%s' "$IN_WAIT" | jq -R 'split(",") | map(gsub("^ +| +$";"")) | map(select(length>0))')
+        body=$(jq -nc \
+          --arg ns "$IN_NS" \
+          --argjson si "$IN_SET_IMAGE" \
+          --argjson w "$wait_json" \
+          --argjson t "$IN_TIMEOUT" \
+          '{namespace:$ns, setImage:$si, wait:$w, timeoutSeconds:$t}')
+        echo "::group::deploy request"; echo "$body" | jq .; echo "::endgroup::"
+        resp=$(curl -sS -w $'\n%{http_code}' -X POST "$IN_URL" \
+          -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$body")
+        code=$(printf '%s' "$resp" | tail -n1)
+        printf '%s' "$resp" | sed '$d' | jq . || printf '%s\n' "$resp"
+        if [ "$code" != "200" ]; then echo "::error::gha-deploy failed (HTTP $code)"; exit 1; fi
+        echo "deploy OK"
