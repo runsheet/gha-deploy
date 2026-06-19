@@ -78,6 +78,8 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532          # distroless nonroot
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: config, mountPath: /etc/gha-deploy, readOnly: true }
